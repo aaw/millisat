@@ -20,18 +20,22 @@ class Solver:
     def add_clause(self, c):
         c = list(set(c))
         self.nvars = max(self.nvars, *(abs(x) for x in c))
+        if len(c) == 1:
+            self.units.add(c[0])
+            return
         x, y = c[0], c[1]
         w1 = self.watch.get(x, -1) if len(c) > 1 else -1
         w2 = self.watch.get(y, -1) if len(c) > 1 else -1
         self.clauses.append(Clause(x,y,c,{x: w1, y: w2}))
-        if len(c) > 1:
-            print('Setting watch[{}] = watch[{}] = {}'.format(x,y,len(self.clauses)-1))
-            self.watch[x], self.watch[y] = len(self.clauses)-1, len(self.clauses)-1
-        else:
-            self.units.add(x)
+        print('Setting watch[{}] = watch[{}] = {}'.format(x,y,len(self.clauses)-1))
+        self.watch[x], self.watch[y] = len(self.clauses)-1, len(self.clauses)-1
 
     def solve(self):
-        trail = [(v,None,0) for v in self.units]  # tuples of (lit, reason, level)
+        trail = [(l,None,0) for l in self.units]  # tuples of (lit, reason, level)
+        for unit in self.units:
+            if abs(unit) in self.assign and (unit > 0) != self.assign[abs(unit)]:
+                return False  # Conflicting units
+            self.assign[abs(unit)] = unit > 0
         curr_level = 0
         levels = [0]  # maps level # -> start index in trail
         level = {}
@@ -53,7 +57,7 @@ class Solver:
                         if l in clause.watches: continue
                         if self.assign.get(abs(l)) is None:
                             print('    watching {} instead'.format(l))
-                            clause.watches.remove(wl)
+                            clause.watches.remove(-wl)
                             clause.watches.add(l)
                             break
                     # Did we fail in finding another watch?
@@ -109,12 +113,12 @@ class Solver:
             # Start a new level
             v = (range(1,self.nvars+1) - self.assign.keys()).pop()
             print('Trail: {}'.format(trail))
-            print('Choosing {}'.format(v))  # TODO: default to negative polarity
+            print('Choosing {}'.format(v))
             self.assign[v] = False
             curr_level += 1
             level[v] = curr_level
             levels.append(len(trail))
-            trail.append((v, None, curr_level))
+            trail.append((-v, None, curr_level))
 
         return True
 
