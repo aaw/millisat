@@ -3,32 +3,62 @@
 import argparse
 import re
 
+class WatchList:
+    def __init__(self):
+        self.clauses = []
+        self.pos = {}
+        self.size = 0
+
+    def add(self, clause):
+        self.pos[clause] = len(self.clauses)
+        self.clauses.append(clause)
+        self.size += 1
+
+    def remove(self, clause):
+        self.clauses[self.pos[clause]] = None
+        del self.pos[clause]
+        self.size -= 1
+        if self.size < len(self.clauses) // 2:
+            self._compact()
+
+    def entries(self):
+        for c in self.clauses:
+            if c is None: continue
+            yield c
+
+    def _compact(self):
+        compacted = []
+        for i, clause in enumerate(self.clauses):
+            if clause is None: continue
+            self.pos[clause] = len(compacted)
+            compacted.append(clause)
+        self.clauses = compacted
+
 class Clause:
-    def __init__(self, w1, w2, lits, wnext):
-        self.watches, self.lits, self.wnext = set((w1, w2)), lits, wnext
+    def __init__(self, w1, w2, lits):
+        self.watches, self.lits = set((w1, w2)), lits
 
     def __repr__(self): return '{}'.format(self.lits)
 
 class Solver:
-    def __init__(self):
-        self.nvars = 0
+    def __init__(self, nvars):
+        self.nvars = nvars
         self.clauses = []
-        self.watch = {}
+        self.watch = dict(((x, WatchList()) for x in range(-nvars,nvars+1) if x != 0))
         self.units = set()
         self.assign = {} # var -> True/False
 
     def add_clause(self, c):
         c = list(set(c))
-        self.nvars = max(self.nvars, *(abs(x) for x in c))
+        assert max(abs(x) for x in c) <= self.nvars
         if len(c) == 1:
             self.units.add(c[0])
             return
         x, y = c[0], c[1]
-        w1 = self.watch.get(x, -1) if len(c) > 1 else -1
-        w2 = self.watch.get(y, -1) if len(c) > 1 else -1
-        self.clauses.append(Clause(x,y,c,{x: w1, y: w2}))
-        print('Setting watch[{}] = watch[{}] = {}'.format(x,y,len(self.clauses)-1))
-        self.watch[x], self.watch[y] = len(self.clauses)-1, len(self.clauses)-1
+        clause = Clause(x,y,c)
+        self.clauses.append(clause)
+        self.watch[x].add(clause)
+        self.watch[y].add(clause)
 
     def solve(self):
         trail = [(l,None,0) for l in self.units]  # tuples of (lit, reason, level)
@@ -45,13 +75,10 @@ class Solver:
             # Propagate pending implications
             while tp < len(trail):
                 wl, reason, _ = trail[tp]
-                print('Propagating {} (reason: {}) (wp for {}: {})'.format(wl, reason, -wl, self.watch.get(-wl,-1)))
+                print('Propagating {} (reason: {})'.format(wl, reason))
                 print('Trail: {}'.format(trail))
                 level[abs(wl)] = curr_level
-                wp = self.watch.get(-wl, -1)
-                while wp >= 0:
-                    # Try to find another lit to watch
-                    clause = self.clauses[wp]
+                for clause in self.watch[-wl].entries():
                     print('  Finding another watch for {} except {}'.format(clause.lits, clause.watches))
                     for l in clause.lits:
                         if l in clause.watches: continue
@@ -59,6 +86,8 @@ class Solver:
                             print('    watching {} instead'.format(l))
                             clause.watches.remove(-wl)
                             clause.watches.add(l)
+                            self.watch[-wl].remove(clause)
+                            self.watch[l].add(clause)
                             break
                     # Did we fail in finding another watch?
                     if -wl in clause.watches:
@@ -103,8 +132,6 @@ class Solver:
                             self.assign[abs(forced)] = forced > 0
                             trail.append((forced, clause, curr_level))
                             level[abs(forced)] = curr_level
-                    wp = clause.wnext[-wl]
-                    print('  Moving on to wp = {}'.format(wp))
                 print('  Done exploring watch list for {}'.format(-wl))
                 tp += 1
 
@@ -157,7 +184,7 @@ if __name__ == '__main__':
         print(clause)
 
 
-    s = Solver()
+    s = Solver(num_vars)
     for c in clauses:
         s.add_clause(c)
     if s.solve():
