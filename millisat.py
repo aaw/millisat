@@ -35,6 +35,7 @@ class WatchList:
         self.clauses = compacted
 
 class Clause:
+    # TODO: don't allow passing watches, just choose watches arbitrarily
     def __init__(self, w1, w2, lits):
         self.watches, self.lits = set((w1, w2)), lits
 
@@ -59,6 +60,7 @@ class Solver:
         self.clauses.append(clause)
         self.watch[x].add(clause)
         self.watch[y].add(clause)
+        return clause
 
     def solve(self):
         trail = [(l,None,0) for l in self.units]  # tuples of (lit, reason, level)
@@ -102,6 +104,7 @@ class Solver:
                             for tl, tc, _ in reversed(trail):
                                 if tc is None: continue
                                 if stamp.get(tl):
+                                    print("trail item: {} {} ({})".format(tl, tc, type(tc)))
                                     for l in tc.lits:
                                         stamp[-l] = True
                                         if -l in resolved:
@@ -121,7 +124,8 @@ class Solver:
                                 if abs(l) in level: del level[abs(l)]
                             tp = len(trail)-1
                             self.assign[abs(new_l)] = new_l > 0
-                            trail.append((new_l, list(resolved), backjump_level))
+                            resolved_clause = self.add_clause(resolved)
+                            trail.append((new_l, resolved_clause, backjump_level))
                             level[abs(new_l)] = backjump_level
                             curr_level = backjump_level
                             break
@@ -188,7 +192,7 @@ if __name__ == '__main__':
     for c in clauses:
         s.add_clause(c)
     if s.solve():
-        assignments = [l * (1 if v else -1) for l,v in s.assign.items()]
+        assignments = [l * (1 if v else -1) for l,v in sorted(s.assign.items())]
         stride = 10
         for i in range(0, len(assignments), stride):
             print('v {} 0'.format(' '.join((str(x) for x in assignments[i:i+stride]))))
