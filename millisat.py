@@ -84,7 +84,7 @@ class Solver:
                     print('  Finding another watch for {} except {}'.format(clause.lits, clause.watches))
                     for l in clause.lits:
                         if l in clause.watches: continue
-                        if self.assign.get(abs(l)) is None:
+                        if self.assign.get(abs(l)) is None or self.assign.get(abs(l)) == (l > 0):
                             print('    watching {} instead'.format(l))
                             clause.watches.remove(-wl)
                             clause.watches.add(l)
@@ -94,6 +94,7 @@ class Solver:
                     # Did we fail in finding another watch?
                     if -wl in clause.watches:
                         forced = (clause.watches - {-wl}).pop()
+                        print('forced={} (= {} - {}), assign[abs({})] = {}'.format(forced, clause.watches, -wl, forced, self.assign.get(abs(forced))))
                         if self.assign.get(abs(forced)) == (forced < 0):
                             print('Conflict with lit {}, clause {} and trail: {}. Resolving...'.format(forced, clause, trail))
                             if curr_level == 0: return False  # UNSAT
@@ -101,21 +102,22 @@ class Solver:
                             resolved = set(clause.lits)
                             trail.append((forced, clause, curr_level))
                             backjump_level = curr_level
+                            # Resolve a conflict
                             for tl, tc, _ in reversed(trail):
-                                if tc is None: continue
+                                if tc is None: continue  # Decision
                                 if stamp.get(tl):
-                                    print("trail item: {} {} ({})".format(tl, tc, type(tc)))
+                                    print('   resolving with {} since {} is stamped'.format(tc, tl))
                                     for l in tc.lits:
-                                        stamp[-l] = True
+                                        if l != tl: stamp[-l] = True
                                         if -l in resolved:
                                             resolved.remove(-l)
                                         else:
                                             resolved.add(l)
+                                    print('      current resolved clause: {}'.format(resolved))
                                     lcount = sum(1 for l in resolved if level[abs(l)] == curr_level)
                                     if lcount == 1:
-                                        print('FINAL RESOLVED: {}'.format(resolved))
-                                        backjump_level = max((l for l in resolved if level[abs(l)] < curr_level), default=0)
-                                        print('NEW LEVEL: {}'.format(backjump_level))
+                                        backjump_level = max((level[abs(l)] for l in resolved if level[abs(l)] < curr_level), default=0)
+                                        print('Installing resolved clause {} at the end of level {}'.format(resolved, backjump_level))
                                         break
                             new_l = [l for l in resolved if level[abs(l)] == curr_level][0]
                             while trail and trail[-1][-1] > backjump_level:
