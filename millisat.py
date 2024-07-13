@@ -48,6 +48,7 @@ class Solver:
         self.nvars = nvars
         self.clauses = []
         self.watch = dict(((x, WatchList()) for x in range(-nvars,nvars+1) if x != 0))
+        self.polarity = dict((v, 0) for v in range(1,nvars+1))
         self.units = set()
         self.assign = {} # var -> True/False
 
@@ -137,6 +138,7 @@ class Solver:
                         else:
                             if LOG > 1: print('  {} forced by {}, adding to trail and assigning'.format(forced, clause.lits))
                             self.assign[abs(forced)] = forced > 0
+                            self.polarity[abs(forced)] += 1 if forced > 0 else -1
                             trail.append((forced, clause, curr_level))
                             level[abs(forced)] = curr_level
                 if LOG > 1: print('  Done exploring watch list for {}'.format(-wl))
@@ -148,7 +150,7 @@ class Solver:
             v = (range(1,self.nvars+1) - self.assign.keys()).pop()
             if LOG > 1: print('Trail: {}'.format(trail))
             print('Choosing {}'.format(v))
-            self.assign[v] = False
+            self.assign[v] = True if self.polarity[v] > 0 else False
             curr_level += 1
             level[v] = curr_level
             levels.append(len(trail))
@@ -198,7 +200,10 @@ if __name__ == '__main__':
         assignments = [l * (1 if v else -1) for l,v in sorted(s.assign.items())]
         stride = 10
         for i in range(0, len(assignments), stride):
-            print('v {} 0'.format(' '.join((str(x) for x in assignments[i:i+stride]))))
+            end = ''
+            if i + stride >= len(assignments):
+                end = " 0"
+            print('v {}{}'.format(' '.join((str(x) for x in assignments[i:i+stride])), end))
         print('s SATISFIABLE')
     else:
         print('s UNSATISFIABLE')
