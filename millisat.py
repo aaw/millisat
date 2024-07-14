@@ -52,13 +52,14 @@ class Solver:
         self.polarity = dict((v, 0) for v in range(1,nvars+1))
         self.units = set()
         self.assign = {} # var -> True/False
+        self.unsat = False
 
     def add_clause(self, c):
         c = list(set(c))
-        assert max(abs(x) for x in c) <= self.nvars
-        if len(c) == 1:
-            self.units.add(c[0])
-            return
+        assert max((abs(x) for x in c), default=0) <= self.nvars
+        if len(c) == 1: self.units.add(c[0])
+        if len(c) == 0: self.unsat = True
+        if len(c) <= 1: return None
         x, y = c[0], c[1]
         clause = Clause(x,y,c)
         self.clauses.append(clause)
@@ -67,6 +68,7 @@ class Solver:
         return clause
 
     def solve(self):
+        if self.unsat: return False
         trail = [(l,None,0) for l in self.units]  # tuples of (lit, reason, level)
         for unit in self.units:
             if abs(unit) in self.assign and (unit > 0) != self.assign[abs(unit)]:
@@ -170,15 +172,20 @@ def parse_dimacs(s):
     clauses = []
     watches = {}
     max_var = 0
+    carryover = []
     for i, line in enumerate(s.split('\n')):
         if line.startswith('c'): continue
         if header is None:
-            header = re.match(r'p cnf (\d+) (\d+)', line)
+            header = re.match(r'p\s+cnf\s+(\d+)\s+(\d+)', line)
             if header is None: raise ValueError('Line {}: Expected header, got: "{}"'.format(i, line))
             continue
-        lits = line.split()
+        lits = carryover + [l.strip() for l in line.split()]
         if len(lits) == 0: continue
-        if lits[-1] != '0': raise ValueError('Line {}: Expected 0 as clause terminator, got "{}"'.format(i, line))
+        if lits[-1] != '0':
+            carryover = lits
+            continue
+        else:
+            carryover = []
         lits = [int(l) for l in lits[:-1]]
         max_var = max(max_var, *(abs(x) for x in lits)) if lits else max_var
         clauses.append(lits)
