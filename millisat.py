@@ -2,6 +2,7 @@
 
 import argparse
 import re
+import sys
 
 LOG = 1
 
@@ -211,5 +212,7 @@ if __name__ == '__main__':
                 end = " 0"
             print('v {}{}'.format(' '.join((str(x) for x in assignments[i:i+stride])), end))
         print('s SATISFIABLE')
+        sys.exit(10)
     else:
         print('s UNSATISFIABLE')
+        sys.exit(20)
