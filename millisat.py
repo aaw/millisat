@@ -84,7 +84,13 @@ class Solver:
                 if LOG > 1: print('Trail: {}'.format(trail))
                 level[abs(wl)] = curr_level
                 for clause in self.watch[-wl].entries():
+                    other_w = (clause.watches - {-wl}).pop()  # TODO: make this clause.other_watch(-wl)
+                    if self.assign.get(abs(other_w)) == (other_w > 0):
+                        if LOG > 1: print('  Other watch {} is already true, skipping'.format(other_w))
+                        continue
                     if LOG > 1: print('  Finding another watch for {} except {}'.format(clause.lits, clause.watches))
+                    if LOG > 1:
+                        print('    assignments: {}'.format(dict([abs(l), self.assign.get(abs(l))] for l in clause.lits)))
                     for l in clause.lits:
                         if l in clause.watches: continue
                         if self.assign.get(abs(l)) is None or self.assign.get(abs(l)) == (l > 0):
@@ -96,7 +102,7 @@ class Solver:
                             break
                     # Did we fail in finding another watch?
                     if -wl in clause.watches:
-                        forced = (clause.watches - {-wl}).pop()
+                        forced = (clause.watches - {-wl}).pop()  # TODO: make this clause.other_watch(-wl)
                         if self.assign.get(abs(forced)) == (forced < 0):
                             if LOG > 1: print('Conflict with lit {}, clause {} and trail: {}. Resolving...'.format(forced, clause, trail))
                             if curr_level == 0: return False  # UNSAT
@@ -105,10 +111,10 @@ class Solver:
                             #trail.append((forced, clause, curr_level))
                             backjump_level = curr_level
                             # Resolve a conflict
-                            for tl, tc, _ in reversed(trail):
+                            for tl, tc, tlev in reversed(trail):
                                 if tc is None: continue  # Decision
                                 if stamp.get(tl):
-                                    if LOG > 1: print('   resolving with {} since {} is stamped'.format(tc, tl))
+                                    if LOG > 1: print('   resolving with {} on level {} since {} is stamped'.format(tc, tlev, tl))
                                     for l in tc.lits:
                                         if l != tl: stamp[-l] = True
                                         if -l in resolved:
@@ -154,7 +160,7 @@ class Solver:
             curr_level += 1
             level[v] = curr_level
             levels.append(len(trail))
-            trail.append((-v, None, curr_level))
+            trail.append(((1 if self.assign[v] else -1) * v, None, curr_level))
 
         return True
 
