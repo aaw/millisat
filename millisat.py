@@ -4,7 +4,7 @@ import argparse
 import re
 import sys
 
-LOG = 1
+LOG = 0
 
 class WatchList:
     def __init__(self):
@@ -42,7 +42,9 @@ class Clause:
     def __init__(self, w1, w2, lits):
         self.watches, self.lits = set((w1, w2)), lits
 
-    def __repr__(self): return '{}'.format(self.lits)
+    def __repr__(self):
+        x = [f'{l}*' if l in self.watches else str(l) for l in self.lits]
+        return '{' + ', '.join(x) + '}'
 
 class Solver:
     def __init__(self, nvars):
@@ -54,13 +56,14 @@ class Solver:
         self.assign = {} # var -> True/False
         self.unsat = False
 
-    def add_clause(self, c):
+    def add_clause(self, c, watch1=None, watch2=None):
         c = list(set(c))
         assert max((abs(x) for x in c), default=0) <= self.nvars
         if len(c) == 1: self.units.add(c[0])
         if len(c) == 0: self.unsat = True
         if len(c) <= 1: return None
-        x, y = c[0], c[1]
+        x = watch1 or c[0]
+        y = (watch2 or c[0]) if (watch1 and x != c[0]) else (watch2 or c[1])
         clause = Clause(x,y,c)
         self.clauses.append(clause)
         self.watch[x].add(clause)
@@ -91,7 +94,7 @@ class Solver:
                     if self.assign.get(abs(other_w)) == (other_w > 0):
                         if LOG > 1: print('  Other watch {} is already true, skipping'.format(other_w))
                         continue
-                    if LOG > 1: print('  Finding another watch for {} except {}'.format(clause.lits, clause.watches))
+                    if LOG > 1: print('  Finding another watch for {}'.format(clause))
                     if LOG > 1:
                         print('    assignments: {}'.format(dict([abs(l), self.assign.get(abs(l))] for l in clause.lits)))
                     for l in clause.lits:
@@ -110,6 +113,7 @@ class Solver:
                             if LOG > 1: print('Conflict with lit {}, clause {} and trail: {}. Resolving...'.format(forced, clause, trail))
                             if curr_level == 0: return False  # UNSAT
                             stamp = dict((-l, True) for l in clause.lits)
+                            if LOG > 1: print('stamped: {}'.format(stamp))
                             resolved = set(clause.lits)
                             #trail.append((forced, clause, curr_level))
                             backjump_level = curr_level
@@ -128,16 +132,22 @@ class Solver:
                                     lcount = sum(1 for l in resolved if level[abs(l)] == curr_level)
                                     if lcount == 1:
                                         backjump_level = max((level[abs(l)] for l in resolved if level[abs(l)] < curr_level), default=0)
-                                        if LOG > 1: print('Installing resolved clause {} at the end of level {}'.format(resolved, backjump_level))
                                         break
+                            # Need to watch l and a lit on backjump_level
                             new_l = [l for l in resolved if level[abs(l)] == curr_level][0]
+                            bj_lits = [l for l in resolved if level[abs(l)] == backjump_level]
+                            new_watch = bj_lits[0] if bj_lits else None  # There will be one bj_lit unless resolved is unit.
                             while trail and trail[-1][-1] > backjump_level:
-                                l, r, _  = trail.pop()
+                                l, r, llev  = trail.pop()
+                                print('  pop {}'.format((l,r,llev)))
                                 del self.assign[abs(l)]
                                 del level[abs(l)]
                             tp = len(trail)-1
                             self.assign[abs(new_l)] = new_l > 0
-                            resolved_clause = self.add_clause(resolved)
+                            # TODO: could compute the other lit to watch when we compute backjump_level
+                            # TODO2
+                            resolved_clause = self.add_clause(resolved, new_l, new_watch)
+                            if LOG > 0: print('[[ Installing resolved clause {} for {} at the end of level {} ]]'.format(resolved_clause, new_l, backjump_level))
                             trail.append((new_l, resolved_clause, backjump_level))
                             level[abs(new_l)] = backjump_level
                             curr_level = backjump_level
@@ -158,8 +168,8 @@ class Solver:
             # Start a new level
             v = (range(1,self.nvars+1) - self.assign.keys()).pop()
             if LOG > 1: print('Trail: {}'.format(trail))
-            print('Choosing {}'.format(v))
             self.assign[v] = True if self.polarity[v] > 0 else False
+            print('Choosing {} = {}'.format(v, self.assign[v]))
             curr_level += 1
             level[v] = curr_level
             levels.append(len(trail))
