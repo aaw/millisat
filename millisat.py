@@ -4,13 +4,11 @@ import argparse
 import re
 import sys
 
-LOG = 0
+LOG = 2
 
 class WatchList:
     def __init__(self):
-        self.clauses = []
-        self.pos = {}
-        self.size = 0
+        self.clauses, self.pos, self.size = [], {}, 0
 
     def add(self, clause):
         self.pos[clause] = len(self.clauses)
@@ -22,25 +20,15 @@ class WatchList:
         del self.pos[clause]
         self.size -= 1
         if self.size < len(self.clauses) // 2:
-            self._compact()
+            self.clauses = [x for x in self.clauses if x is not None]
+            self.pos = {x: i for i, x in enumerate(self.clauses)}
 
     def entries(self):
-        for c in self.clauses:
-            if c is None: continue
-            yield c
-
-    def _compact(self):
-        compacted = []
-        for i, clause in enumerate(self.clauses):
-            if clause is None: continue
-            self.pos[clause] = len(compacted)
-            compacted.append(clause)
-        self.clauses = compacted
+        yield from (c for c in self.clauses if c is not None)
 
 class Clause:
-    # TODO: don't allow passing watches, just choose watches arbitrarily
-    def __init__(self, w1, w2, lits):
-        self.watches, self.lits = set((w1, w2)), lits
+    def __init__(self, watch1, watch2, lits):
+        self.watches, self.lits = set((watch1, watch2)), lits
 
     def __repr__(self):
         x = [f'{l}*' if l in self.watches else str(l) for l in self.lits]
