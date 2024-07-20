@@ -42,6 +42,7 @@ class Solver:
         self.polarity = dict((v, 0) for v in range(1,nvars+1))
         self.units = set()
         self.assign = {} # var -> True/False
+        # TODO: better interface so that I don't need this variable. also
         self.unsat = False
 
     def add_clause(self, c, watch1=None, watch2=None):
@@ -66,7 +67,6 @@ class Solver:
                 return False  # Conflicting units
             self.assign[abs(unit)] = unit > 0
         curr_level = 0
-        levels = [0]  # maps level # -> start index in trail
         level = {}
         tp = 0  # Next unprocessed trail item
         while len(self.assign) < self.nvars or tp < len(trail):
@@ -160,7 +160,6 @@ class Solver:
             print('Choosing {} = {}'.format(v, self.assign[v]))
             curr_level += 1
             level[v] = curr_level
-            levels.append(len(trail))
             trail.append(((1 if self.assign[v] else -1) * v, None, curr_level))
 
         return True
