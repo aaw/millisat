@@ -49,7 +49,22 @@ class Solver:
         return clause
 
     def _reduce_database(self):
-        pass
+        self.max_clauses += 500
+        to_keep = (len(self.clauses) - len(self.first_learned)) // 2
+        best_clauses = sorted((c,len(set(self.level[abs(l)] for l in c.lits))) for c in self.clauses[self.first_learned:])[:to_keep]
+        for clause in self.clauses[self.first_learned:]:
+            for w in clause.watches:
+                self.watch[w].remove(clause)
+        self.clauses = self.clauses[:self.first_learned]
+
+    def _backjump(self, backjump_level):
+        while self.trail and self.trail[-1][-1] > backjump_level:
+            l, r, llev  = self.trail.pop()
+            if LOG > 1: print('  pop {}'.format((l,r,llev)))
+            self.polarity[abs(l)] += 1 if l > 0 else -1
+            del self.assign[abs(l)]
+            del self.level[abs(l)]
+            self.free.add(abs(l))
 
     def _restart(self):
         pass
@@ -60,31 +75,35 @@ class Solver:
         self.polarity = dict((v, 0) for v in range(1,nvars+1))
         self.units = set()
         self.assign = {} # var -> True/False
+        self.level = {}
 
         for clause in clauses:
             if len(clause) == 0: return False
             assert max(abs(x) for x in clause) <= nvars
             self._add_clause(clause)
-        free = set(range(1, nvars+1))  # All free variables
-        trail = [(l,None,0) for l in self.units]  # Tuples of (lit, reason, level)
+
+        self.max_clauses = len(self.clauses) * 2
+        self.first_learned = len(self.clauses)
+        self.free = set(range(1, nvars+1))  # All free variables
+        self.trail = [(l,None,0) for l in self.units]  # Tuples of (lit, reason, level)
         # TODO: shouldn't need to do unit propagation here, should be able to just propagate
         # them by setting tp = 0. Need this to work to make _restart work...
         for unit in self.units:
             if abs(unit) in self.assign and (unit > 0) != self.assign[abs(unit)]:
                 return False  # Conflicting units
             self.assign[abs(unit)] = unit > 0
-            free.remove(abs(unit))
+            self.free.remove(abs(unit))
         curr_level = 0
-        level = {}
+
         tp = 0  # Next unprocessed trail item
-        while len(self.assign) < nvars or tp < len(trail):
+        while len(self.assign) < nvars or tp < len(self.trail):
             if LOG > 1: print('assignments: {}'.format(self.assign))
             # Propagate pending implications
-            while tp < len(trail):
-                wl, reason, _ = trail[tp]
+            while tp < len(self.trail):
+                wl, reason, _ = self.trail[tp]
                 if LOG > 1: print('Propagating {} (reason: {})'.format(wl, reason))
-                if LOG > 1: print('Trail: {}'.format(trail))
-                level[abs(wl)] = curr_level
+                if LOG > 1: print('Trail: {}'.format(self.trail))
+                self.level[abs(wl)] = curr_level
                 for clause in self.watch[-wl].entries():
                     other_w = (clause.watches - {-wl}).pop()  # TODO: make this clause.other_watch(-wl)
                     if self.assign.get(abs(other_w)) == (other_w > 0):
@@ -106,7 +125,7 @@ class Solver:
                     if -wl in clause.watches:
                         forced = (clause.watches - {-wl}).pop()  # TODO: make this clause.other_watch(-wl)
                         if self.assign.get(abs(forced)) == (forced < 0):
-                            if LOG > 1: print('Conflict with lit {}, clause {} and trail: {}. Resolving...'.format(forced, clause, trail))
+                            if LOG > 1: print('Conflict with lit {}, clause {} and trail: {}. Resolving...'.format(forced, clause, self.trail))
                             if curr_level == 0: return False  # UNSAT
                             stamp = dict((-l, True) for l in clause.lits)
                             if LOG > 1: print('stamped: {}'.format(stamp))
@@ -114,7 +133,7 @@ class Solver:
                             #trail.append((forced, clause, curr_level))
                             backjump_level = curr_level
                             # Resolve a conflict
-                            for tl, tc, tlev in reversed(trail):
+                            for tl, tc, tlev in reversed(self.trail):
                                 if tc is None: continue  # Decision
                                 if stamp.get(tl):
                                     if LOG > 1: print('   resolving with {} on level {} since {} is stamped'.format(tc, tlev, tl))
@@ -125,29 +144,23 @@ class Solver:
                                         else:
                                             resolved.add(l)
                                     if LOG > 1: print('      current resolved clause: {}'.format(resolved))
-                                    lcount = sum(1 for l in resolved if level[abs(l)] == curr_level)
+                                    lcount = sum(1 for l in resolved if self.level[abs(l)] == curr_level)
                                     if lcount == 1:
-                                        backjump_level = max((level[abs(l)] for l in resolved if level[abs(l)] < curr_level), default=0)
+                                        backjump_level = max((self.level[abs(l)] for l in resolved if self.level[abs(l)] < curr_level), default=0)
                                         break
                             # Need to watch l and a lit on backjump_level
                             # TODO: compute these on the fly during resolution, not after the fact.
-                            new_l = [l for l in resolved if level[abs(l)] == curr_level][0]
-                            bj_lits = [l for l in resolved if level[abs(l)] == backjump_level]
+                            new_l = [l for l in resolved if self.level[abs(l)] == curr_level][0]
+                            bj_lits = [l for l in resolved if self.level[abs(l)] == backjump_level]
                             new_watch = bj_lits[0] if bj_lits else None  # There will be one bj_lit unless resolved is unit.
-                            while trail and trail[-1][-1] > backjump_level:
-                                l, r, llev  = trail.pop()
-                                if LOG > 1: print('  pop {}'.format((l,r,llev)))
-                                self.polarity[abs(l)] += 1 if l > 0 else -1
-                                del self.assign[abs(l)]
-                                del level[abs(l)]
-                                free.add(abs(l))
-                            tp = len(trail)-1
+                            self._backjump(backjump_level)
+                            tp = len(self.trail)-1
                             self.assign[abs(new_l)] = new_l > 0
-                            free.remove(abs(new_l))
+                            self.free.remove(abs(new_l))
                             resolved_clause = self._add_clause(resolved, new_l, new_watch)
                             if LOG > 0: print('[[ Installing resolved clause {} for {} at the end of level {} ]]'.format(resolved_clause, new_l, backjump_level))
-                            trail.append((new_l, resolved_clause, backjump_level))
-                            level[abs(new_l)] = backjump_level
+                            self.trail.append((new_l, resolved_clause, backjump_level))
+                            self.level[abs(new_l)] = backjump_level
                             curr_level = backjump_level
                             break
                         elif self.assign.get(abs(forced)) == (forced > 0):
@@ -155,22 +168,22 @@ class Solver:
                         else:
                             if LOG > 1: print('  {} forced by {}, adding to trail and assigning'.format(forced, clause.lits))
                             self.assign[abs(forced)] = forced > 0
-                            free.remove(abs(forced))
-                            trail.append((forced, clause, curr_level))
-                            level[abs(forced)] = curr_level
+                            self.free.remove(abs(forced))
+                            self.trail.append((forced, clause, curr_level))
+                            self.level[abs(forced)] = curr_level
                 if LOG > 1: print('  Done exploring watch list for {}'.format(-wl))
                 tp += 1
 
             if len(self.assign) == nvars: break
 
             # Nothing left to propagate. Make a choice and start a new level.
-            v = free.pop() # but 'v = (range(1,nvars+1) - self.assign.keys()).pop()' is faster on medium?
-            if LOG > 1: print('Trail: {}'.format(trail))
+            v = self.free.pop() # but 'v = (range(1,nvars+1) - self.assign.keys()).pop()' is faster on medium?
+            if LOG > 1: print('Trail: {}'.format(self.trail))
             self.assign[v] = True if self.polarity[v] > 0 else False
             if LOG > 1: print('Choosing {} = {}'.format(v, self.assign[v]))
             curr_level += 1
-            level[v] = curr_level
-            trail.append(((1 if self.assign[v] else -1) * v, None, curr_level))
+            self.level[v] = curr_level
+            self.trail.append(((1 if self.assign[v] else -1) * v, None, curr_level))
 
         return [l * (1 if v else -1) for l,v in sorted(self.assign.items())]
 
