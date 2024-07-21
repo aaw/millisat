@@ -48,6 +48,12 @@ class Solver:
         self.watch[y].add(clause)
         return clause
 
+    def _reduce_database(self):
+        pass
+
+    def _restart(self):
+        pass
+
     def solve(self, nvars, clauses):
         self.clauses = []
         self.watch = dict(((x, WatchList()) for x in range(-nvars,nvars+1) if x != 0))
@@ -61,6 +67,8 @@ class Solver:
             self._add_clause(clause)
         free = set(range(1, nvars+1))  # All free variables
         trail = [(l,None,0) for l in self.units]  # Tuples of (lit, reason, level)
+        # TODO: shouldn't need to do unit propagation here, should be able to just propagate
+        # them by setting tp = 0. Need this to work to make _restart work...
         for unit in self.units:
             if abs(unit) in self.assign and (unit > 0) != self.assign[abs(unit)]:
                 return False  # Conflicting units
