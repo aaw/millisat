@@ -4,7 +4,7 @@ import argparse
 import re
 import sys
 
-LOG = 2
+LOG = 0
 
 class WatchList:
     def __init__(self):
@@ -35,22 +35,11 @@ class Clause:
         return '{' + ', '.join(x) + '}'
 
 class Solver:
-    def __init__(self, nvars):
-        self.nvars = nvars
-        self.clauses = []
-        self.watch = dict(((x, WatchList()) for x in range(-nvars,nvars+1) if x != 0))
-        self.polarity = dict((v, 0) for v in range(1,nvars+1))
-        self.units = set()
-        self.assign = {} # var -> True/False
-        # TODO: better interface so that I don't need this variable. also
-        self.unsat = False
-
-    def add_clause(self, c, watch1=None, watch2=None):
+    def _add_clause(self, c, watch1=None, watch2=None):
         c = list(set(c))
-        assert max((abs(x) for x in c), default=0) <= self.nvars
-        if len(c) == 1: self.units.add(c[0])
-        if len(c) == 0: self.unsat = True
-        if len(c) <= 1: return None
+        if len(c) == 1:
+            self.units.add(c[0])
+            return None
         x = watch1 or c[0]
         y = (watch2 or c[0]) if (watch1 and x != c[0]) else (watch2 or c[1])
         clause = Clause(x,y,c)
@@ -59,17 +48,28 @@ class Solver:
         self.watch[y].add(clause)
         return clause
 
-    def solve(self):
-        if self.unsat: return False
-        trail = [(l,None,0) for l in self.units]  # tuples of (lit, reason, level)
+    def solve(self, nvars, clauses):
+        self.clauses = []
+        self.watch = dict(((x, WatchList()) for x in range(-nvars,nvars+1) if x != 0))
+        self.polarity = dict((v, 0) for v in range(1,nvars+1))
+        self.units = set()
+        self.assign = {} # var -> True/False
+
+        for clause in clauses:
+            if len(clause) == 0: return False
+            assert max(abs(x) for x in clause) <= nvars
+            self._add_clause(clause)
+        free = set(range(1, nvars+1))  # All free variables
+        trail = [(l,None,0) for l in self.units]  # Tuples of (lit, reason, level)
         for unit in self.units:
             if abs(unit) in self.assign and (unit > 0) != self.assign[abs(unit)]:
                 return False  # Conflicting units
             self.assign[abs(unit)] = unit > 0
+            free.remove(abs(unit))
         curr_level = 0
         level = {}
         tp = 0  # Next unprocessed trail item
-        while len(self.assign) < self.nvars or tp < len(trail):
+        while len(self.assign) < nvars or tp < len(trail):
             if LOG > 1: print('assignments: {}'.format(self.assign))
             # Propagate pending implications
             while tp < len(trail):
@@ -122,19 +122,21 @@ class Solver:
                                         backjump_level = max((level[abs(l)] for l in resolved if level[abs(l)] < curr_level), default=0)
                                         break
                             # Need to watch l and a lit on backjump_level
+                            # TODO: compute these on the fly during resolution, not after the fact.
                             new_l = [l for l in resolved if level[abs(l)] == curr_level][0]
                             bj_lits = [l for l in resolved if level[abs(l)] == backjump_level]
                             new_watch = bj_lits[0] if bj_lits else None  # There will be one bj_lit unless resolved is unit.
                             while trail and trail[-1][-1] > backjump_level:
                                 l, r, llev  = trail.pop()
-                                print('  pop {}'.format((l,r,llev)))
+                                if LOG > 1: print('  pop {}'.format((l,r,llev)))
+                                self.polarity[abs(l)] += 1 if l > 0 else -1
                                 del self.assign[abs(l)]
                                 del level[abs(l)]
+                                free.add(abs(l))
                             tp = len(trail)-1
                             self.assign[abs(new_l)] = new_l > 0
-                            # TODO: could compute the other lit to watch when we compute backjump_level
-                            # TODO2
-                            resolved_clause = self.add_clause(resolved, new_l, new_watch)
+                            free.remove(abs(new_l))
+                            resolved_clause = self._add_clause(resolved, new_l, new_watch)
                             if LOG > 0: print('[[ Installing resolved clause {} for {} at the end of level {} ]]'.format(resolved_clause, new_l, backjump_level))
                             trail.append((new_l, resolved_clause, backjump_level))
                             level[abs(new_l)] = backjump_level
@@ -145,24 +147,24 @@ class Solver:
                         else:
                             if LOG > 1: print('  {} forced by {}, adding to trail and assigning'.format(forced, clause.lits))
                             self.assign[abs(forced)] = forced > 0
-                            self.polarity[abs(forced)] += 1 if forced > 0 else -1
+                            free.remove(abs(forced))
                             trail.append((forced, clause, curr_level))
                             level[abs(forced)] = curr_level
                 if LOG > 1: print('  Done exploring watch list for {}'.format(-wl))
                 tp += 1
 
-            if len(self.assign) == self.nvars: break
+            if len(self.assign) == nvars: break
 
             # Start a new level
-            v = (range(1,self.nvars+1) - self.assign.keys()).pop()
+            v = free.pop() # but 'v = (range(1,nvars+1) - self.assign.keys()).pop()' is faster on medium?
             if LOG > 1: print('Trail: {}'.format(trail))
             self.assign[v] = True if self.polarity[v] > 0 else False
-            print('Choosing {} = {}'.format(v, self.assign[v]))
+            if LOG > 1: print('Choosing {} = {}'.format(v, self.assign[v]))
             curr_level += 1
             level[v] = curr_level
             trail.append(((1 if self.assign[v] else -1) * v, None, curr_level))
 
-        return True
+        return [l * (1 if v else -1) for l,v in sorted(self.assign.items())]
 
 def parse_dimacs(s):
     header = None
@@ -199,16 +201,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     num_vars, clauses = parse_dimacs(open(args.filename).read())
-    print('{} vars, {} clauses'.format(num_vars, len(clauses)))
-    for clause in clauses:
-        print(clause)
-
-
-    s = Solver(num_vars)
-    for c in clauses:
-        s.add_clause(c)
-    if s.solve():
-        assignments = [l * (1 if v else -1) for l,v in sorted(s.assign.items())]
+    if assignments := Solver().solve(num_vars, clauses):
         stride = 10
         for i in range(0, len(assignments), stride):
             end = ''
