@@ -48,14 +48,21 @@ class Solver:
         self.watch[y].add(clause)
         return clause
 
-    def _reduce_database(self):
-        self.max_clauses += 500
-        to_keep = (len(self.clauses) - len(self.first_learned)) // 2
-        best_clauses = sorted((c,len(set(self.level[abs(l)] for l in c.lits))) for c in self.clauses[self.first_learned:])[:to_keep]
+    def _prune_lemmas(self):
+        self.max_clauses += 300
+        trail_clauses = set(reason for lit, reason, level in self.trail if reason is not None)
+        num_to_keep = ((len(self.clauses) - self.first_learned) // 2) - len(trail_clauses)
+        best_clauses = sorted(((c, len(c.lits)) for c in self.clauses[self.first_learned:] if c not in trail_clauses), key=lambda x: x[-1])[:num_to_keep]
         for clause in self.clauses[self.first_learned:]:
             for w in clause.watches:
                 self.watch[w].remove(clause)
         self.clauses = self.clauses[:self.first_learned]
+        for clause in trail_clauses:
+            w1, w2 = clause.watches
+            self._add_clause(clause.lits, w1, w2)
+        for clause, _ in best_clauses:
+            w1, w2 = clause.watches
+            self._add_clause(clause.lits, w1, w2)
 
     def _backjump(self, backjump_level):
         while self.trail and self.trail[-1][-1] > backjump_level:
@@ -97,6 +104,9 @@ class Solver:
 
         tp = 0  # Next unprocessed trail item
         while len(self.assign) < nvars or tp < len(self.trail):
+            print('clauses: {}, upper limit: {}'.format(len(self.clauses), self.max_clauses))
+            if len(self.clauses) > self.max_clauses:
+                self._prune_lemmas()
             if LOG > 1: print('assignments: {}'.format(self.assign))
             # Propagate pending implications
             while tp < len(self.trail):
