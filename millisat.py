@@ -163,7 +163,7 @@ class Solver:
 
             if len(self.assign) == nvars: break
 
-            # Start a new level
+            # Nothing left to propagate. Make a choice and start a new level.
             v = free.pop() # but 'v = (range(1,nvars+1) - self.assign.keys()).pop()' is faster on medium?
             if LOG > 1: print('Trail: {}'.format(trail))
             self.assign[v] = True if self.polarity[v] > 0 else False
@@ -175,11 +175,7 @@ class Solver:
         return [l * (1 if v else -1) for l,v in sorted(self.assign.items())]
 
 def parse_dimacs(s):
-    header = None
-    clauses = []
-    watches = {}
-    max_var = 0
-    carryover = []
+    header, clauses, max_var, carryover = None, [], 0, []
     for i, line in enumerate(s.split('\n')):
         if line.startswith('c'): continue
         if header is None:
@@ -212,9 +208,7 @@ if __name__ == '__main__':
     if assignments := Solver().solve(num_vars, clauses):
         stride = 10
         for i in range(0, len(assignments), stride):
-            end = ''
-            if i + stride >= len(assignments):
-                end = " 0"
+            end = ' 0' if i + stride >= len(assignments) else ''
             print('v {}{}'.format(' '.join((str(x) for x in assignments[i:i+stride])), end))
         print('s SATISFIABLE')
         sys.exit(10)
