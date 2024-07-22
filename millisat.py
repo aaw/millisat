@@ -28,14 +28,21 @@ class WatchList:
         yield from (c for c in self.clauses if c is not None)
 
 class Clause:
-    def __init__(self, watch1, watch2, lits):
-        self.watches, self.lits = set((watch1, watch2)), lits
+    def __init__(self, lits, watch1, watch2):
+        self.lits, self.watches = lits, set((watch1, watch2))
 
     def __repr__(self):
         x = [f'{l}*' if l in self.watches else str(l) for l in self.lits]
         return '{' + ', '.join(x) + '}'
 
 class Solver:
+    # A literal can either agree with its variable assignment, disagree, or not
+    # have an assignment at all.
+    def _lit_satisfied(self, lit): return self.assign.get(abs(lit)) == (lit > 0)
+    def _lit_falsified(self, lit): return self.assign.get(abs(lit)) == (lit < 0)
+    def _lit_unassigned(self, lit): return abs(lit) not in self.assign
+    def _assign_lit_true(self, lit): self.assign[abs(lit)] = (lit > 0); self.free.remove(abs(lit))
+
     def _add_clause(self, c, watch1=None, watch2=None):
         c = list(set(c))
         if len(c) == 1:
@@ -43,7 +50,7 @@ class Solver:
             return None
         x = watch1 or c[0]
         y = (watch2 or c[0]) if (watch1 and x != c[0]) else (watch2 or c[1])
-        clause = Clause(x,y,c)
+        clause = Clause(c, x, y)
         self.clauses.append(clause)
         self.watch[x].add(clause)
         self.watch[y].add(clause)
@@ -66,13 +73,15 @@ class Solver:
             self._add_clause(clause.lits, w1, w2)
 
     def _backjump(self, backjump_level):
-        while self.trail and self.trail[-1][-1] > backjump_level:
-            l, r, llev  = self.trail.pop()
-            if LOG > 1: print('  pop {}'.format((l,r,llev)))
-            self.polarity[abs(l)] = l > 0
-            del self.assign[abs(l)]
-            del self.level[abs(l)]
-            self.free.add(abs(l))
+        while self.trail:
+            lit, reason, level = self.trail[-1]
+            if LOG > 1: print('  pop {}'.format((lit,reason,level)))
+            if level <= backjump_level: return
+            self.polarity[abs(lit)] = lit > 0  # probably don't need this here?
+            del self.assign[abs(lit)]
+            del self.level[abs(lit)]
+            self.free.add(abs(lit))
+            self.trail.pop()
 
     def solve(self, nvars, clauses):
         self.agility = 1.0
@@ -81,7 +90,7 @@ class Solver:
         self.polarity = dict((v, False) for v in range(1,nvars+1))
         self.units = set()
         self.assign = {} # var -> True/False
-        self.level = {}
+        self.level = {} # var -> level in the trail
 
         for clause in clauses:
             if len(clause) == 0: return False
@@ -95,15 +104,12 @@ class Solver:
         self.tp = 0  # Next unprocessed trail item
         # Units aren't on watchlists, so we need to handle any initial conflicts here.
         for unit in self.units:
-            if abs(unit) in self.assign and (unit > 0) != self.assign[abs(unit)]:
-                return False  # Conflicting units
-            self.assign[abs(unit)] = unit > 0
-            self.free.remove(abs(unit))
+            if self._lit_falsified(unit): return False  # Conflicting units
+            self._assign_lit_true(unit)
         curr_level = 0
 
         while len(self.assign) < nvars or self.tp < len(self.trail):
-            if len(self.clauses) > self.max_clauses:
-                self._prune_lemmas()
+            if len(self.clauses) > self.max_clauses: self._prune_lemmas()
             if LOG > 1: print('assignments: {}'.format(self.assign))
             # Propagate pending implications
             while self.tp < len(self.trail):
@@ -113,7 +119,7 @@ class Solver:
                 self.level[abs(wl)] = curr_level
                 for clause in self.watch[-wl].entries():
                     other_w = (clause.watches - {-wl}).pop()  # TODO: make this clause.other_watch(-wl)
-                    if self.assign.get(abs(other_w)) == (other_w > 0):
+                    if self._lit_satisfied(other_w):
                         if LOG > 1: print('  Other watch {} is already true, skipping'.format(other_w))
                         continue
                     if LOG > 1: print('  Finding another watch for {}'.format(clause))
@@ -121,7 +127,7 @@ class Solver:
                         print('    assignments: {}'.format(dict([abs(l), self.assign.get(abs(l))] for l in clause.lits)))
                     for l in clause.lits:
                         if l in clause.watches: continue
-                        if self.assign.get(abs(l)) is None or self.assign.get(abs(l)) == (l > 0):
+                        if self._lit_unassigned(l) or self._lit_satisfied(l):
                             if LOG > 1: print('    watching {} instead'.format(l))
                             clause.watches.remove(-wl)
                             clause.watches.add(l)
@@ -131,7 +137,7 @@ class Solver:
                     # Did we fail in finding another watch?
                     if -wl in clause.watches:
                         forced = (clause.watches - {-wl}).pop()  # TODO: make this clause.other_watch(-wl)
-                        if self.assign.get(abs(forced)) == (forced < 0):
+                        if self._lit_falsified(forced):
                             if LOG > 1: print('Conflict with lit {}, clause {} and trail: {}. Resolving...'.format(forced, clause, self.trail))
                             if curr_level == 0: return False  # UNSAT
                             stamp = dict((-l, True) for l in clause.lits)
@@ -165,22 +171,20 @@ class Solver:
                             # TODO: these next ~10 lines are nearly identical to the 10 lines in the final else clause below.
                             self.agility *= G
                             if forced > 0 != self.polarity[abs(new_l)]: self.agility += 1 - G
-                            self.assign[abs(new_l)] = new_l > 0
-                            self.free.remove(abs(new_l))
+                            self._assign_lit_true(new_l)
                             resolved_clause = self._add_clause(resolved, new_l, new_watch)
                             if LOG > 0: print('[[ Installing resolved clause {} for {} at the end of level {} ]]'.format(resolved_clause, new_l, backjump_level))
                             self.trail.append((new_l, resolved_clause, backjump_level))
                             self.level[abs(new_l)] = backjump_level
                             curr_level = backjump_level
                             break
-                        elif self.assign.get(abs(forced)) == (forced > 0):
+                        elif self._lit_satisfied(forced):
                             if LOG > 1: print('  {} already true, moving on...'.format(forced))
                         else:
                             if LOG > 1: print('  {} forced by {}, adding to trail and assigning'.format(forced, clause.lits))
                             self.agility *= G
                             if forced > 0 != self.polarity[abs(forced)]: self.agility += 1 - G
-                            self.assign[abs(forced)] = forced > 0
-                            self.free.remove(abs(forced))
+                            self._assign_lit_true(forced)
                             self.trail.append((forced, clause, curr_level))
                             self.level[abs(forced)] = curr_level
                 if LOG > 1: print('  Done exploring watch list for {}'.format(-wl))
