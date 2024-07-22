@@ -5,7 +5,7 @@ import re
 import sys
 
 G = 0.9999  # Armin Biere's agility multiplier
-LOG = 2
+LOG = 0
 
 class WatchList:
     def __init__(self):
@@ -69,19 +69,16 @@ class Solver:
         while self.trail and self.trail[-1][-1] > backjump_level:
             l, r, llev  = self.trail.pop()
             if LOG > 1: print('  pop {}'.format((l,r,llev)))
-            self.polarity[abs(l)] += 1 if l > 0 else -1
+            self.polarity[abs(l)] = l > 0
             del self.assign[abs(l)]
             del self.level[abs(l)]
             self.free.add(abs(l))
-
-    def _restart(self):
-        self._backjump(0)
 
     def solve(self, nvars, clauses):
         self.agility = 1.0
         self.clauses = []
         self.watch = dict(((x, WatchList()) for x in range(-nvars,nvars+1) if x != 0))
-        self.polarity = dict((v, 0) for v in range(1,nvars+1))
+        self.polarity = dict((v, False) for v in range(1,nvars+1))
         self.units = set()
         self.assign = {} # var -> True/False
         self.level = {}
@@ -95,8 +92,8 @@ class Solver:
         self.first_learned = len(self.clauses)
         self.free = set(range(1, nvars+1))  # All free variables
         self.trail = [(l,None,0) for l in self.units]  # Tuples of (lit, reason, level)
-        # TODO: shouldn't need to do unit propagation here, should be able to just propagate
-        # them by setting tp = 0. Need this to work to make _restart work...
+        self.tp = 0  # Next unprocessed trail item
+        # Units aren't on watchlists, so we need to handle any initial conflicts here.
         for unit in self.units:
             if abs(unit) in self.assign and (unit > 0) != self.assign[abs(unit)]:
                 return False  # Conflicting units
@@ -104,14 +101,13 @@ class Solver:
             self.free.remove(abs(unit))
         curr_level = 0
 
-        tp = 0  # Next unprocessed trail item
-        while len(self.assign) < nvars or tp < len(self.trail):
+        while len(self.assign) < nvars or self.tp < len(self.trail):
             if len(self.clauses) > self.max_clauses:
                 self._prune_lemmas()
             if LOG > 1: print('assignments: {}'.format(self.assign))
             # Propagate pending implications
-            while tp < len(self.trail):
-                wl, reason, _ = self.trail[tp]
+            while self.tp < len(self.trail):
+                wl, reason, _ = self.trail[self.tp]
                 if LOG > 1: print('Propagating {} (reason: {})'.format(wl, reason))
                 if LOG > 1: print('Trail: {}'.format(self.trail))
                 self.level[abs(wl)] = curr_level
@@ -165,7 +161,7 @@ class Solver:
                             bj_lits = [l for l in resolved if self.level[abs(l)] == backjump_level]
                             new_watch = bj_lits[0] if bj_lits else None  # There will be one bj_lit unless resolved is unit.
                             self._backjump(backjump_level)
-                            tp = len(self.trail)-1
+                            self.tp = len(self.trail) - 1  # We'll inc again at end of this loop
                             # TODO: these next ~10 lines are nearly identical to the 10 lines in the final else clause below.
                             self.agility *= G
                             if forced > 0 != self.polarity[abs(new_l)]: self.agility += 1 - G
@@ -188,20 +184,21 @@ class Solver:
                             self.trail.append((forced, clause, curr_level))
                             self.level[abs(forced)] = curr_level
                 if LOG > 1: print('  Done exploring watch list for {}'.format(-wl))
-                tp += 1
+                self.tp += 1
 
             if len(self.assign) == nvars: break
 
-            # if self.agility < 0.20:
-            #     print('agility too low, restarting')
-            #     self._restart()
-            #     self.agility = 1.0
-            #     continue
+            print('agility: {}'.format(self.agility))
+            if self.agility < 0.20:
+                print('agility too low, restarting')
+                self._backjump(0)
+                self.tp = len(self.trail)
+                self.agility = 1.0
 
             # Nothing left to propagate. Make a choice and start a new level.
             v = self.free.pop() # but 'v = (range(1,nvars+1) - self.assign.keys()).pop()' is faster on medium?
             if LOG > 1: print('Trail: {}'.format(self.trail))
-            self.assign[v] = True if self.polarity[v] > 0 else False
+            self.assign[v] = self.polarity[v]
             if LOG > 1: print('Choosing {} = {}'.format(v, self.assign[v]))
             curr_level += 1
             self.level[v] = curr_level
