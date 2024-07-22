@@ -31,6 +31,9 @@ class Clause:
     def __init__(self, lits, watch1, watch2):
         self.lits, self.watches = lits, set((watch1, watch2))
 
+    def other_watch(self, watch):
+        assert watch in self.watches; return (self.watches - {watch}).pop()
+
     def __repr__(self):
         x = [f'{l}*' if l in self.watches else str(l) for l in self.lits]
         return '{' + ', '.join(x) + '}'
@@ -118,7 +121,7 @@ class Solver:
                 if LOG > 1: print('Trail: {}'.format(self.trail))
                 self.level[abs(wl)] = curr_level
                 for clause in self.watch[-wl].entries():
-                    other_w = (clause.watches - {-wl}).pop()  # TODO: make this clause.other_watch(-wl)
+                    other_w = clause.other_watch(-wl)
                     if self._lit_satisfied(other_w):
                         if LOG > 1: print('  Other watch {} is already true, skipping'.format(other_w))
                         continue
@@ -136,7 +139,7 @@ class Solver:
                             break
                     # Did we fail in finding another watch?
                     if -wl in clause.watches:
-                        forced = (clause.watches - {-wl}).pop()  # TODO: make this clause.other_watch(-wl)
+                        forced = clause.other_watch(-wl)
                         if self._lit_falsified(forced):
                             if LOG > 1: print('Conflict with lit {}, clause {} and trail: {}. Resolving...'.format(forced, clause, self.trail))
                             if curr_level == 0: return False  # UNSAT
