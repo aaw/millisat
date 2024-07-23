@@ -176,6 +176,7 @@ class Solver:
                             self.tp = len(self.trail) - 1  # We'll inc again at end of this loop
                             # TODO: these next ~10 lines are nearly identical to the 10 lines in the final else clause below.
                             resolved_clause = self._add_clause(resolved, new_l, new_watch)
+                            #print('learned {}'.format(resolved_clause))
                             self._assign_and_add_to_trail(new_l, resolved_clause, backjump_level)
                             curr_level = backjump_level
                             break
@@ -187,15 +188,15 @@ class Solver:
 
             if len(self.assign) == nvars: break
 
-            print('agility: {}'.format(self.agility))
+            # If we haven't been selecting many new values for variables, we're probably stuck in a
+            # rut and should restart, wiping out variable assignments but keeping learned clauses.
             if self.agility < 0.20:
-                print('agility too low, restarting')
                 self._backjump(0)
                 self.tp = len(self.trail)
                 self.agility = 1.0
 
             # Nothing left to propagate. Make a choice and start a new level.
-            v = self.free.pop() # but 'v = (range(1,nvars+1) - self.assign.keys()).pop()' is faster on medium?
+            v = self.free.pop() # but 'v = (range(1,nvars+1) - self.assign.keys()).pop()' is faster on medium? and 4x faster for langford_prime_10
             if LOG > 1: print('Trail: {}'.format(self.trail))
             self.assign[v] = self.polarity[v]
             if LOG > 1: print('Choosing {} = {}'.format(v, self.assign[v]))
