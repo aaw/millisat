@@ -9,26 +9,6 @@ G = 0.9999  # Armin Biere's agility multiplier
 RHO = 0.96
 LOG = 0
 
-class WatchList:
-    def __init__(self):
-        self.clauses, self.pos, self.size = [], {}, 0
-
-    def entries(self):
-        yield from (c for c in self.clauses if c is not None)
-
-    def add(self, clause):
-        self.pos[clause] = len(self.clauses)
-        self.clauses.append(clause)
-        self.size += 1
-
-    def remove(self, clause):
-        self.clauses[self.pos[clause]] = None
-        del self.pos[clause]
-        self.size -= 1
-        if self.size < len(self.clauses) // 2:
-            self.clauses = [x for x in self.clauses if x is not None]
-            self.pos = {x: i for i, x in enumerate(self.clauses)}
-
 # TODO: since i already have self.members in VarQueue, just consolidate assignments and VarQueue
 class VarQueue:
     def __init__(self, n):
@@ -135,7 +115,7 @@ class Solver:
     def solve(self, nvars, clauses):
         self.agility = 1.0
         self.clauses = []
-        self.watch = dict(((x, WatchList()) for x in range(-nvars,nvars+1) if x != 0))
+        self.watch = dict(((x, set()) for x in range(-nvars,nvars+1) if x != 0))
         self.polarity = dict((v, False) for v in range(1,nvars+1))
         self.units = set()
         self.assign = {} # var -> True/False
@@ -166,7 +146,7 @@ class Solver:
                 if LOG > 1: print('Propagating {} (reason: {})'.format(wl, reason))
                 if LOG > 1: print('Trail: {}'.format(self.trail))
                 self.level[abs(wl)] = curr_level
-                for clause in self.watch[-wl].entries():
+                for clause in self.watch[-wl].copy():
                     if self._lit_satisfied(clause.other_watch(-wl)): continue
                     if LOG > 1: print('  Finding another watch for {}'.format(clause))
                     if LOG > 1:
