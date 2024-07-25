@@ -29,6 +29,7 @@ class WatchList:
             self.clauses = [x for x in self.clauses if x is not None]
             self.pos = {x: i for i, x in enumerate(self.clauses)}
 
+# TODO: since i already have self.members in VarQueue, just consolidate assignments and VarQueue
 class VarQueue:
     def __init__(self, n):
         self.heap, self.delta, self.members = [], 1.0, set()
