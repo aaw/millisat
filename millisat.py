@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
+# https://github.com/aaw/millisat: a small but complete CDCL SAT solver in a single file.
+
 import argparse
 import itertools
 import re
 import sys
-
-G = 0.9999  # Armin Biere's agility multiplier
 
 class Clause:
     def __init__(self, lits, watch1, watch2):
@@ -13,9 +13,6 @@ class Clause:
 
     def other_watch(self, watch):
         assert watch in self.watches; return (self.watches - {watch}).pop()
-
-    def __repr__(self):
-        return '(' + ' '.join([f'{l}*' if l in self.watches else str(l) for l in self.lits]) + ')'
 
 class Solver:
     # A literal can either agree with its variable assignment, disagree, or not
@@ -26,10 +23,10 @@ class Solver:
     def _assign_lit_true(self, lit): self.assign[abs(lit)] = (lit > 0); del self.free[abs(lit)]
 
     def _assign_and_add_to_trail(self, lit, reason, level):
-        self.agility *= G
-        if lit > 0 != self.saved[abs(lit)]: self.agility += 1 - G
+        self.agility *= 0.9999
+        if lit > 0 != self.saved[abs(lit)]: self.agility += 1 - 0.9999
         self._assign_lit_true(lit)
-        self.trail.append((lit, reason, level))
+        self.trail.append((lit, reason))
         self.level[abs(lit)] = level
 
     def _add_clause(self, c, watch1=None, watch2=None):
@@ -47,7 +44,7 @@ class Solver:
 
     def _prune_lemmas(self):
         self.max_clauses += 300
-        trail_clauses = set(reason for lit, reason, level in self.trail if reason is not None)
+        trail_clauses = set(reason for lit, reason in self.trail if reason is not None)
         num_to_keep = ((len(self.clauses) - self.first_learned) // 2) - len(trail_clauses)
         best_clauses = sorted(((c, len(c.lits)) for c in self.clauses[self.first_learned:] if c not in trail_clauses), key=lambda x: x[-1])[:num_to_keep]
         for clause in self.clauses[self.first_learned:]:
@@ -60,8 +57,8 @@ class Solver:
 
     def _backjump(self, backjump_level):
         while self.trail:
-            lit, reason, level = self.trail[-1]
-            if level <= backjump_level: return
+            lit, reason = self.trail[-1]
+            if self.level[abs(lit)] <= backjump_level: return
             self.saved[abs(lit)] = lit > 0
             del self.assign[abs(lit)]
             del self.level[abs(lit)]
@@ -81,14 +78,13 @@ class Solver:
         self.watch = dict(((x, set()) for x in range(-nvars,nvars+1) if x != 0))  # Watchlists
         self.clauses = []  # The clause database.
         for clause in clauses:
-            if not clause: return False
+            if not clause: return False  # empty clause, UNSAT
             assert max(abs(x) for x in clause) <= nvars
             self._add_clause(clause)
         self.max_clauses = len(self.clauses) * 2  # The max clauses we'll learn before pruning.
         self.first_learned = len(self.clauses)  # Index of the first learned clause, for pruning.
-        self.trail = [(l, None, 0) for l in self.units]  # Tuples of (lit, reason, level).
+        self.trail = [(l, None) for l in self.units]  # Tuples of (lit, reason).
         self.tp = 0  # Next unprocessed trail item.
-        # Units aren't on watchlists, so we need to handle any initial conflicts first.
         for unit in self.units:
             if self._lit_falsified(unit): return False  # Conflicting units
             self._assign_lit_true(unit)
@@ -96,35 +92,33 @@ class Solver:
         current_level = 0
         while len(self.assign) < nvars or self.tp < len(self.trail):
             if len(self.clauses) > self.max_clauses: self._prune_lemmas()
-            # Propagate pending implications
-            while self.tp < len(self.trail):
-                wl, reason, _ = self.trail[self.tp]
-                self.level[abs(wl)] = current_level
-                for clause in self.watch[-wl].copy():
-                    if self._lit_satisfied(clause.other_watch(-wl)): continue
-                    for l in clause.lits:
-                        if l in clause.watches: continue
-                        if self._lit_unassigned(l) or self._lit_satisfied(l):
-                            clause.watches.remove(-wl)
-                            clause.watches.add(l)
-                            self.watch[-wl].remove(clause)
-                            self.watch[l].add(clause)
+            while self.tp < len(self.trail):  # Propagate pending implications
+                lit, reason = self.trail[self.tp]
+                self.level[abs(lit)] = current_level
+                for clause in self.watch[-lit].copy():
+                    if self._lit_satisfied(clause.other_watch(-lit)): continue
+                    for clause_lit in clause.lits:  # Try to find another watch.
+                        if clause_lit in clause.watches: continue
+                        if self._lit_unassigned(clause_lit) or self._lit_satisfied(clause_lit):
+                            clause.watches.remove(-lit)
+                            clause.watches.add(clause_lit)
+                            self.watch[-lit].remove(clause)
+                            self.watch[clause_lit].add(clause)
                             break
-                    # Did we fail in finding another watch?
-                    if -wl in clause.watches:
-                        forced = clause.other_watch(-wl)
+                    if -lit in clause.watches:  # Did we fail in finding another watch?
+                        forced = clause.other_watch(-lit)
                         if self._lit_falsified(forced):
                             if current_level == 0: return False  # UNSAT
+                            # Resolve a conflict, producing a new clause. Then backjump.
                             stamp = dict((-l, True) for l in clause.lits)
                             resolved = set(clause.lits)
                             current_level_lits = set(l for l in resolved if self.level[abs(l)] == current_level)
                             backjump_level, backjump_lit = current_level, None
-                            # Resolve a conflict
-                            for tl, tc, tlev in reversed(self.trail):
-                                if tc is None: continue  # Decision
-                                if stamp.get(tl):
-                                    for l in tc.lits:
-                                        if l != tl: stamp[-l] = True
+                            for trail_lit, trail_clause in reversed(self.trail):
+                                if trail_clause is None: continue  # Decision
+                                if stamp.get(trail_lit):
+                                    for l in trail_clause.lits:
+                                        if l != trail_lit: stamp[-l] = True
                                         if -l in resolved:
                                             if self.level[abs(l)] == current_level: current_level_lits.remove(-l)
                                             resolved.remove(-l)
@@ -146,9 +140,9 @@ class Solver:
                             break
                         elif not self._lit_satisfied(forced):
                             self._assign_and_add_to_trail(forced, clause, current_level)
-                self.tp += 1
+                self.tp += 1  # Move on to the next unprocessed trail entry.
 
-            if len(self.assign) == nvars: break
+            if len(self.assign) == nvars: break  # SAT
 
             # If we haven't been selecting many new values for variables, we're probably stuck in a
             # rut and should restart, wiping out variable assignments but keeping learned clauses.
@@ -162,7 +156,7 @@ class Solver:
             self.assign[v] = self.saved[v]
             current_level += 1
             self.level[v] = current_level
-            self.trail.append(((1 if self.assign[v] else -1) * v, None, current_level))
+            self.trail.append(((1 if self.assign[v] else -1) * v, None))
 
         return [l * (1 if v else -1) for l, v in sorted(self.assign.items())]
 
@@ -185,10 +179,8 @@ def parse_dimacs(s):
         max_var = max(max_var, *(abs(x) for x in lits)) if lits else max_var
         clauses.append(lits)
     num_vars, num_clauses = (int(x) for x in header.groups())
-    if len(clauses) != num_clauses:
-        raise ValueError('Inconsistent clause count in header vs. file ({} vs. {})'.format(num_clauses, len(clauses)))
-    if max_var > num_vars:
-        raise ValueError('Inconsistent number of variables in header vs. file ({} vs. {})'.format(num_vars, max_var))
+    if len(clauses) != num_clauses: raise ValueError('Inconsistent clause count in header vs. file ({} vs. {})'.format(num_clauses, len(clauses)))
+    if max_var > num_vars: raise ValueError('Inconsistent number of variables in header vs. file ({} vs. {})'.format(num_vars, max_var))
     return num_vars, clauses
 
 if __name__ == '__main__':
@@ -202,8 +194,6 @@ if __name__ == '__main__':
         for i in range(0, len(assignments), stride):
             end = ' 0' if i + stride >= len(assignments) else ''
             print('v {}{}'.format(' '.join((str(x) for x in assignments[i:i+stride])), end))
-        print('s SATISFIABLE')
-        sys.exit(10)
+        print('s SATISFIABLE'); sys.exit(10)
     else:
-        print('s UNSATISFIABLE')
-        sys.exit(20)
+        print('s UNSATISFIABLE'); sys.exit(20)
