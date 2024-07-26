@@ -2,11 +2,11 @@
 
 import argparse
 import heapq
+import itertools
 import re
 import sys
 
 G = 0.9999  # Armin Biere's agility multiplier
-RHO = 0.96
 LOG = 0
 
 class Clause:
@@ -29,7 +29,7 @@ class Solver:
 
     def _assign_and_add_to_trail(self, lit, reason, level):
         self.agility *= G
-        if lit > 0 != self.polarity[abs(lit)]: self.agility += 1 - G
+        if lit > 0 != self.saved[abs(lit)]: self.agility += 1 - G
         self._assign_lit_true(lit)
         self.trail.append((lit, reason, level))
         self.level[abs(lit)] = level
@@ -56,10 +56,7 @@ class Solver:
             for w in clause.watches:
                 self.watch[w].remove(clause)
         self.clauses = self.clauses[:self.first_learned]
-        for clause in trail_clauses:
-            w1, w2 = clause.watches
-            self._add_clause(clause.lits, w1, w2)
-        for clause, _ in best_clauses:
+        for clause in itertools.chain(trail_clauses, (x[0] for x in best_clauses)):
             w1, w2 = clause.watches
             self._add_clause(clause.lits, w1, w2)
 
@@ -68,32 +65,33 @@ class Solver:
             lit, reason, level = self.trail[-1]
             if LOG > 1: print('  pop {}'.format((lit,reason,level)))
             if level <= backjump_level: return
-            self.polarity[abs(lit)] = lit > 0  # probably don't need this here?
+            self.saved[abs(lit)] = lit > 0
             del self.assign[abs(lit)]
             del self.level[abs(lit)]
             self.free[abs(lit)] = True
             self.trail.pop()
 
     def solve(self, nvars, clauses):
-        self.agility = 1.0
-        self.clauses = []
-        self.watch = dict(((x, set()) for x in range(-nvars,nvars+1) if x != 0))
-        self.polarity = dict((v, False) for v in range(1,nvars+1))
-        self.units = set()
+        # Every variable should be in either assign (mapped to its current assignment) or in free,
+        # but never in both. free is a dict so that we can test membership efficiently and use
+        # popitem as a rough proxy for VSIDS, since popitem always returns the most recently added.
         self.assign = {} # var -> True/False
         self.free = {i: True for i in range(1, nvars+1)}
         self.level = {} # var -> level in the trail
-
+        self.agility = 1.0  # When this gets too low, we should restart.
+        self.saved = dict((v, False) for v in range(1,nvars+1))  # Saved recent values of vars.
+        self.units = set()  # All unit clauses, stored as literals.
+        self.watch = dict(((x, set()) for x in range(-nvars,nvars+1) if x != 0))  # Watchlists
+        self.clauses = []  # The clause database.
         for clause in clauses:
             if len(clause) == 0: return False
             assert max(abs(x) for x in clause) <= nvars
             self._add_clause(clause)
-
-        self.max_clauses = len(self.clauses) * 2
-        self.first_learned = len(self.clauses)
-        self.trail = [(l, None, 0) for l in self.units]  # Tuples of (lit, reason, level)
-        self.tp = 0  # Next unprocessed trail item
-        # Units aren't on watchlists, so we need to handle any initial conflicts here.
+        self.max_clauses = len(self.clauses) * 2  # The max clauses we'll learn before pruning.
+        self.first_learned = len(self.clauses)  # Index of the first learned clause, for pruning.
+        self.trail = [(l, None, 0) for l in self.units]  # Tuples of (lit, reason, level).
+        self.tp = 0  # Next unprocessed trail item.
+        # Units aren't on watchlists, so we need to handle any initial conflicts first.
         for unit in self.units:
             if self._lit_falsified(unit): return False  # Conflicting units
             self._assign_lit_true(unit)
@@ -131,7 +129,6 @@ class Solver:
                             stamp = dict((-l, True) for l in clause.lits)
                             if LOG > 1: print('stamped: {}'.format(stamp))
                             resolved = set(clause.lits)
-                            #trail.append((forced, clause, curr_level))
                             backjump_level = curr_level
                             # Resolve a conflict
                             for tl, tc, tlev in reversed(self.trail):
@@ -180,13 +177,13 @@ class Solver:
             # Nothing left to propagate. Make a choice and start a new level.
             v = self.free.popitem()[0]
             if LOG > 1: print('Trail: {}'.format(self.trail))
-            self.assign[v] = self.polarity[v]
+            self.assign[v] = self.saved[v]
             if LOG > 1: print('Choosing {} = {}'.format(v, self.assign[v]))
             curr_level += 1
             self.level[v] = curr_level
             self.trail.append(((1 if self.assign[v] else -1) * v, None, curr_level))
 
-        return [l * (1 if v else -1) for l,v in sorted(self.assign.items())]
+        return [l * (1 if v else -1) for l, v in sorted(self.assign.items())]
 
 def parse_dimacs(s):
     header, clauses, max_var, carryover = None, [], 0, []
