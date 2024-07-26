@@ -1,2 +1,2 @@
 # millisat
-A single-file Python CDCL solver
+A single-file Python CDCL SAT solver.
