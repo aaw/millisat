@@ -6,7 +6,6 @@ import re
 import sys
 
 G = 0.9999  # Armin Biere's agility multiplier
-LOG = 0
 
 class Clause:
     def __init__(self, lits, watch1, watch2):
@@ -62,7 +61,6 @@ class Solver:
     def _backjump(self, backjump_level):
         while self.trail:
             lit, reason, level = self.trail[-1]
-            if LOG > 1: print('  pop {}'.format((lit,reason,level)))
             if level <= backjump_level: return
             self.saved[abs(lit)] = lit > 0
             del self.assign[abs(lit)]
@@ -98,22 +96,15 @@ class Solver:
         current_level = 0
         while len(self.assign) < nvars or self.tp < len(self.trail):
             if len(self.clauses) > self.max_clauses: self._prune_lemmas()
-            if LOG > 1: print('assignments: {}'.format(self.assign))
             # Propagate pending implications
             while self.tp < len(self.trail):
                 wl, reason, _ = self.trail[self.tp]
-                if LOG > 1: print('Propagating {} (reason: {})'.format(wl, reason))
-                if LOG > 1: print('Trail: {}'.format(self.trail))
                 self.level[abs(wl)] = current_level
                 for clause in self.watch[-wl].copy():
                     if self._lit_satisfied(clause.other_watch(-wl)): continue
-                    if LOG > 1: print('  Finding another watch for {}'.format(clause))
-                    if LOG > 1:
-                        print('    assignments: {}'.format(dict([abs(l), self.assign.get(abs(l))] for l in clause.lits)))
                     for l in clause.lits:
                         if l in clause.watches: continue
                         if self._lit_unassigned(l) or self._lit_satisfied(l):
-                            if LOG > 1: print('    watching {} instead'.format(l))
                             clause.watches.remove(-wl)
                             clause.watches.add(l)
                             self.watch[-wl].remove(clause)
@@ -123,10 +114,8 @@ class Solver:
                     if -wl in clause.watches:
                         forced = clause.other_watch(-wl)
                         if self._lit_falsified(forced):
-                            if LOG > 1: print('Conflict with lit {}, clause {} and trail: {}. Resolving...'.format(forced, clause, self.trail))
                             if current_level == 0: return False  # UNSAT
                             stamp = dict((-l, True) for l in clause.lits)
-                            if LOG > 1: print('stamped: {}'.format(stamp))
                             resolved = set(clause.lits)
                             current_level_lits = set(l for l in resolved if self.level[abs(l)] == current_level)
                             backjump_level, backjump_lit = current_level, None
@@ -134,7 +123,6 @@ class Solver:
                             for tl, tc, tlev in reversed(self.trail):
                                 if tc is None: continue  # Decision
                                 if stamp.get(tl):
-                                    if LOG > 1: print('   resolving with {} on level {} since {} is stamped'.format(tc, tlev, tl))
                                     for l in tc.lits:
                                         if l != tl: stamp[-l] = True
                                         if -l in resolved:
@@ -153,14 +141,11 @@ class Solver:
                             self._backjump(backjump_level)
                             self.tp = len(self.trail) - 1  # We'll inc again at end of this loop
                             resolved_clause = self._add_clause(resolved, decision_lit, backjump_lit)
-                            #print('learned {}'.format(resolved_clause))
                             self._assign_and_add_to_trail(decision_lit, resolved_clause, backjump_level)
                             current_level = backjump_level
                             break
                         elif not self._lit_satisfied(forced):
-                            if LOG > 1: print('  {} forced by {}, adding to trail and assigning'.format(forced, clause.lits))
                             self._assign_and_add_to_trail(forced, clause, current_level)
-                if LOG > 1: print('  Done exploring watch list for {}'.format(-wl))
                 self.tp += 1
 
             if len(self.assign) == nvars: break
@@ -174,9 +159,7 @@ class Solver:
 
             # Nothing left to propagate. Make a decision and assignment then start a new level.
             v = self.free.popitem()[0]
-            if LOG > 1: print('Trail: {}'.format(self.trail))
             self.assign[v] = self.saved[v]
-            if LOG > 1: print('Choosing {} = {}'.format(v, self.assign[v]))
             current_level += 1
             self.level[v] = current_level
             self.trail.append(((1 if self.assign[v] else -1) * v, None, current_level))
