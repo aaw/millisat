@@ -9,44 +9,6 @@ G = 0.9999  # Armin Biere's agility multiplier
 RHO = 0.96
 LOG = 0
 
-# TODO: since i already have self.members in VarQueue, just consolidate assignments and VarQueue
-class VarQueue:
-    def __init__(self, n):
-        self.heap, self.delta, self.members = [], 1.0, set()
-        self.vcount = dict((i,0) for i in range(1, n+1))
-        self.score = dict((i,0.0) for i in range(1, n+1))
-        for i in range(1, n+1):
-            self.add(i)
-
-    def add(self, item):
-        self.members.add(item)
-        self.push(item)
-
-    def remove(self, item):
-        self.members.remove(item)
-        self.vcount[item] += 1
-
-    def push(self, item):
-        self.vcount[item] += 1
-        entry = (-self.score[item], item, self.vcount[item])
-        heapq.heappush(self.heap, entry)
-
-    def pop(self):
-        while self.heap:
-            score, item, vc = heapq.heappop(self.heap)
-            if vc == self.vcount[item] and item in self.members:
-                self.members.remove(item)
-                return item
-
-    def bump(self, item):
-        self.score[item] += self.delta
-        self.push(item)
-
-    def rescale(self):
-        # TODO: call rescale from time-to-time
-        # TODO: am I using delta and RHO correctly here???
-        self.delta /= RHO
-
 class Clause:
     def __init__(self, lits, watch1, watch2):
         self.lits, self.watches = lits, set((watch1, watch2))
@@ -63,7 +25,7 @@ class Solver:
     def _lit_satisfied(self, lit): return self.assign.get(abs(lit)) == (lit > 0)
     def _lit_falsified(self, lit): return self.assign.get(abs(lit)) == (lit < 0)
     def _lit_unassigned(self, lit): return abs(lit) not in self.assign
-    def _assign_lit_true(self, lit): self.assign[abs(lit)] = (lit > 0); self.free.remove(abs(lit))
+    def _assign_lit_true(self, lit): self.assign[abs(lit)] = (lit > 0); del self.free[abs(lit)]
 
     def _assign_and_add_to_trail(self, lit, reason, level):
         self.agility *= G
@@ -109,7 +71,7 @@ class Solver:
             self.polarity[abs(lit)] = lit > 0  # probably don't need this here?
             del self.assign[abs(lit)]
             del self.level[abs(lit)]
-            self.free.add(abs(lit))
+            self.free[abs(lit)] = True
             self.trail.pop()
 
     def solve(self, nvars, clauses):
@@ -119,6 +81,7 @@ class Solver:
         self.polarity = dict((v, False) for v in range(1,nvars+1))
         self.units = set()
         self.assign = {} # var -> True/False
+        self.free = {i: True for i in range(1, nvars+1)}
         self.level = {} # var -> level in the trail
 
         for clause in clauses:
@@ -128,7 +91,6 @@ class Solver:
 
         self.max_clauses = len(self.clauses) * 2
         self.first_learned = len(self.clauses)
-        self.free = VarQueue(nvars)
         self.trail = [(l, None, 0) for l in self.units]  # Tuples of (lit, reason, level)
         self.tp = 0  # Next unprocessed trail item
         # Units aren't on watchlists, so we need to handle any initial conflicts here.
@@ -177,7 +139,6 @@ class Solver:
                                 if stamp.get(tl):
                                     if LOG > 1: print('   resolving with {} on level {} since {} is stamped'.format(tc, tlev, tl))
                                     for l in tc.lits:
-                                        self.free.bump(abs(l))
                                         if l != tl: stamp[-l] = True
                                         if -l in resolved:
                                             resolved.remove(-l)
@@ -217,7 +178,7 @@ class Solver:
                 self.agility = 1.0
 
             # Nothing left to propagate. Make a choice and start a new level.
-            v = self.free.pop()
+            v = self.free.popitem()[0]
             if LOG > 1: print('Trail: {}'.format(self.trail))
             self.assign[v] = self.polarity[v]
             if LOG > 1: print('Choosing {} = {}'.format(v, self.assign[v]))
